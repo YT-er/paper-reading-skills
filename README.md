@@ -37,16 +37,16 @@ https://github.com/Agentchengfeng/chengfeng-videocut-skills
 
 ## 一句话安装
 
-直接从 GitHub 安装：
+直接从这个安全加固 fork 安装：
 
 ```bash
-npx -y github:Agentchengfeng/paper-reading-skills install
+npx -y github:YT-er/paper-reading-skills install
 ```
 
 也支持 `cpm` 兼容命令：
 
 ```bash
-npx -y github:Agentchengfeng/paper-reading-skills cpm install
+npx -y github:YT-er/paper-reading-skills cpm install
 ```
 
 安装后重新打开 Claude Code / Codex 会话，让 Skill 列表重新加载。
@@ -71,13 +71,13 @@ npx -y github:Agentchengfeng/paper-reading-skills cpm install
 检查安装状态：
 
 ```bash
-npx -y github:Agentchengfeng/paper-reading-skills doctor
+npx -y github:YT-er/paper-reading-skills doctor
 ```
 
 卸载并保留备份：
 
 ```bash
-npx -y github:Agentchengfeng/paper-reading-skills uninstall
+npx -y github:YT-er/paper-reading-skills uninstall
 ```
 
 ## 最短使用方式

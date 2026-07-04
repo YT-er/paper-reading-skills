@@ -1,6 +1,6 @@
 ---
 name: paper-reading
-description: "读研究论文、技术报告、arXiv PDF、论文 repo 或资料包时使用。用于目的优先的论文解读、文档式 HTML 长文、SVG 图解、划线协作标记、本地 bridge 写回、标记解释、正文重组、以及 Codex 内置浏览器刷新验证。"
+description: "读生命科学、医学、生物信息、算法软件、流程论文、技术报告、arXiv PDF、论文 repo 或资料包时使用。用于目的优先的论文解读、文档式 HTML 长文、SVG 图解、划线协作标记、本地 bridge 写回、标记解释、正文重组、以及 Codex 内置浏览器刷新验证。"
 ---
 
 # 论文协作阅读
@@ -9,6 +9,7 @@ description: "读研究论文、技术报告、arXiv PDF、论文 repo 或资料
 
 - 只定义方法、结构、组件契约和执行边界，不定义某篇论文、模型、系统、指标或实验内容。
 - 具体内容必须来自当次论文材料、repo、用户补充或当前 HTML。
+- 生命科学材料先识别研究对象、数据/实验类型和论文类型，再选择组学、生信流程、机制、临床转化或免疫肿瘤等阅读视角。
 - `~/.codex/skills/paper-reading` 是 `~/.claude/skills/paper-reading` 的软链；改这里即同步两边。
 
 ## 组件

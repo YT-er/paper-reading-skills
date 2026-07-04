@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 import argparse
 import html
+import ipaddress
 import json
 import re
+import secrets
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 KIND_LABELS = {
@@ -18,6 +20,7 @@ KIND_LABELS = {
 BLOCK_RE = re.compile(r"\n(?P<indent>\s*)(?P<block><(?P<tag>p|li|h[1-6]|div)\b[^>]*>.*?</(?P=tag)>)", re.S)
 TAG_RE = re.compile(r"<[^>]+>")
 SVG_TEXT_RE = re.compile(r"(?P<open><text\b(?P<attrs>[^>]*)>)(?P<body>.*?)(?P<close></text>)", re.S)
+DEFAULT_MAX_BODY_BYTES = 64 * 1024
 
 
 def now_iso():
@@ -30,6 +33,22 @@ def attr_escape(value):
 
 def text_escape(value):
     return html.escape(str(value or ""), quote=False)
+
+
+def is_loopback_host(host):
+    if host in ("localhost", "::1"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def is_loopback_origin(origin):
+    parsed = urlparse(origin)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    return is_loopback_host(parsed.hostname)
 
 
 def normalize_kind(kind):
@@ -300,24 +319,62 @@ def insert_question_block(page_path, item):
 class PaperBridgeHandler(BaseHTTPRequestHandler):
     server_version = "PaperReadingBridge/2.0"
 
-    def end_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+    def send_cors_headers(self):
+        origin = self.headers.get("Origin")
+        if origin and not self.server.is_origin_allowed(origin):
+            return
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        super().end_headers()
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Paper-Bridge-Token, Authorization")
 
-    def write_json(self, payload, status=200):
+    def write_json(self, payload, status=200, *, cors=True):
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if cors:
+            self.send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
+    def ensure_origin_allowed(self):
+        origin = self.headers.get("Origin")
+        if origin and not self.server.is_origin_allowed(origin):
+            self.write_json({"ok": False, "error": "origin not allowed"}, status=403, cors=False)
+            return False
+        return True
+
+    def request_token(self):
+        header_token = self.headers.get("X-Paper-Bridge-Token", "")
+        if header_token:
+            return header_token.strip()
+
+        authorization = self.headers.get("Authorization", "")
+        if authorization.lower().startswith("bearer "):
+            return authorization[7:].strip()
+
+        query = parse_qs(urlparse(self.path).query)
+        return (query.get("token") or [""])[0]
+
+    def ensure_authorized(self):
+        if not self.server.token:
+            return True
+        if secrets.compare_digest(self.request_token(), self.server.token):
+            return True
+        self.write_json({"ok": False, "error": "unauthorized"}, status=401)
+        return False
+
     def do_OPTIONS(self):
+        if not self.ensure_origin_allowed():
+            return
         self.write_json({"ok": True})
 
     def do_GET(self):
+        if not self.ensure_origin_allowed() or not self.ensure_authorized():
+            return
+
         path = urlparse(self.path).path
         if path == "/healthz":
             self.write_json({"ok": True, "page": str(self.server.page_path), "log": str(self.server.log_path)})
@@ -337,6 +394,9 @@ class PaperBridgeHandler(BaseHTTPRequestHandler):
         self.write_json({"ok": False, "error": "not found"}, status=404)
 
     def do_POST(self):
+        if not self.ensure_origin_allowed() or not self.ensure_authorized():
+            return
+
         path = urlparse(self.path).path
         if path != self.server.endpoint:
             self.write_json({"ok": False, "error": "not found"}, status=404)
@@ -344,6 +404,9 @@ class PaperBridgeHandler(BaseHTTPRequestHandler):
 
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if length > self.server.max_body_bytes:
+                self.write_json({"ok": False, "error": "request body too large"}, status=413)
+                return
             raw = self.rfile.read(length).decode("utf-8")
             item = json.loads(raw)
         except Exception as exc:
@@ -365,15 +428,24 @@ class PaperBridgeHandler(BaseHTTPRequestHandler):
         self.write_json({"ok": True, "item": item, "reload": bool(insert_result.get("inserted"))})
 
     def log_message(self, format, *args):
-        print(f"[{self.log_date_time_string()}] {self.address_string()} {format % args}")
+        message = re.sub(r"([?&]token=)[^&\s]+", r"\1[redacted]", format % args)
+        print(f"[{self.log_date_time_string()}] {self.address_string()} {message}")
 
 
 class PaperBridgeServer(ThreadingHTTPServer):
-    def __init__(self, server_address, handler_class, *, endpoint, page_path, log_path):
+    def __init__(self, server_address, handler_class, *, endpoint, page_path, log_path, token, allowed_origins, max_body_bytes):
         super().__init__(server_address, handler_class)
         self.endpoint = endpoint
         self.page_path = Path(page_path).expanduser() if page_path else None
         self.log_path = Path(log_path).expanduser()
+        self.token = token
+        self.allowed_origins = set(allowed_origins)
+        self.max_body_bytes = max_body_bytes
+
+    def is_origin_allowed(self, origin):
+        if "*" in self.allowed_origins or origin in self.allowed_origins:
+            return True
+        return is_loopback_origin(origin)
 
 
 def main():
@@ -383,19 +455,38 @@ def main():
     parser.add_argument("--endpoint", default="/__paper_annotation")
     parser.add_argument("--page", required=True, help="HTML file to update.")
     parser.add_argument("--log", default="paper_annotation_requests.jsonl")
+    parser.add_argument("--token", help="Bridge access token. Defaults to a generated one-time token.")
+    parser.add_argument("--allow-unauthenticated", action="store_true", help="Disable token checks. Only use in trusted local sessions.")
+    parser.add_argument("--allow-origin", action="append", default=[], help="Extra allowed Origin value. Repeat for multiple origins.")
+    parser.add_argument("--allow-non-loopback", action="store_true", help="Allow binding to a non-loopback host.")
+    parser.add_argument("--max-body-bytes", type=int, default=DEFAULT_MAX_BODY_BYTES)
     args = parser.parse_args()
 
+    if not args.allow_non_loopback and not is_loopback_host(args.host):
+        parser.error("--host must be loopback unless --allow-non-loopback is set")
+    if args.max_body_bytes <= 0:
+        parser.error("--max-body-bytes must be positive")
+
+    token = None if args.allow_unauthenticated else (args.token or secrets.token_urlsafe(24))
     server = PaperBridgeServer(
         (args.host, args.port),
         PaperBridgeHandler,
         endpoint=args.endpoint,
         page_path=args.page,
         log_path=args.log,
+        token=token,
+        allowed_origins=args.allow_origin,
+        max_body_bytes=args.max_body_bytes,
     )
     print(f"Paper reading bridge: http://{args.host}:{args.port}{args.endpoint}")
     print(f"Health: http://{args.host}:{args.port}/healthz")
     print(f"Request log: {Path(args.log).expanduser()}")
     print(f"HTML page: {Path(args.page).expanduser()}")
+    if token:
+        print(f"Bridge token: {token}")
+        print("Send it as X-Paper-Bridge-Token or Authorization: Bearer <token>.")
+    else:
+        print("Bridge token: disabled by --allow-unauthenticated")
     server.serve_forever()
 
 

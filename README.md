@@ -118,7 +118,21 @@ bridge 默认监听：
 127.0.0.1:8766
 ```
 
+启动后终端会打印一次性 `Bridge token`。生成的 HTML 请求 bridge 时需要把它放进 `X-Paper-Bridge-Token` 请求头；也可以先在 localhost 页面控制台保存：
+
+```js
+localStorage.setItem("paperReadingBridgeToken", "<Bridge token>")
+```
+
 bridge 只做本地写回：接收标记、写 JSONL、修改 HTML。它不调用模型，也不保存 API key。
+
+安全默认值：
+
+- 只有本机 `localhost`、`127.0.0.1`、`::1` 来源可以跨源访问 bridge。
+- `/healthz`、`/requests` 和写回接口都需要 token。
+- 请求体默认最大 64KB。
+- 绑定到非本机地址需要显式添加 `--allow-non-loopback`。
+- 旧 HTML 如需临时兼容无 token 请求，可添加 `--allow-unauthenticated`；只建议在完全可信的本地会话中短时使用。
 
 ## 工作流
 
@@ -185,6 +199,7 @@ paper-reading-skills/
 - 不把 HTML 直接连到模型服务。
 - 本地安装替换前会自动备份旧版本。
 - Codex 目录是 Claude Skill 的软链，两边共用一个源目录。
+- Bridge 默认启用 token、本机 Origin 限制和请求体大小限制；用完建议停止进程。
 
 ## 协议
 

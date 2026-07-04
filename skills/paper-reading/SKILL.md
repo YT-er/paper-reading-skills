@@ -47,4 +47,5 @@ paper-reading/
 
 - HTML 不放 API key，不直接调用模型。
 - Bridge 只接收标记、写 JSONL、改 HTML；不生成解释。
+- Bridge 默认需要 token，并只允许本机 localhost/127.0.0.1/::1 来源；生成或修复 HTML 时，写回请求必须发送 `X-Paper-Bridge-Token`。
 - 不新增 README、examples、templates、runtime 解释层或未验证示例。

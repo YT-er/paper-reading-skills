@@ -141,6 +141,28 @@ python3 ~/.claude/skills/paper-reading/scripts/bridge.py \
 
 Bridge 只负责写 JSONL、持久化高亮和插入疑问卡片，不生成解释。
 
+安全约束：
+
+- Bridge 默认生成一次性 token，并要求所有 GET/POST 请求携带 `X-Paper-Bridge-Token`。
+- 生成或修复页面时，写回请求从 `window.paperReadingBridgeToken` 或 `localStorage.paperReadingBridgeToken` 读取 token，并放入请求头。
+- Bridge 默认只允许本机 `localhost`、`127.0.0.1`、`::1` 来源跨源访问。
+- 不要让页面依赖 `file://` 或无 token 写回；旧页面临时调试才使用 `--allow-unauthenticated`。
+- `/requests` 会返回本地划线日志内容，必须走 token 保护。
+
+推荐页面请求形态：
+
+```js
+const bridgeToken = window.paperReadingBridgeToken || localStorage.getItem("paperReadingBridgeToken") || "";
+await fetch(window.paperReadingMarks.bridgeUrl, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "X-Paper-Bridge-Token": bridgeToken
+  },
+  body: JSON.stringify(mark)
+});
+```
+
 ## 浏览器验证
 
 - Codex 修改 HTML 后，刷新当前 Codex 内置浏览器的 localhost 页面。
@@ -152,5 +174,5 @@ Bridge 只负责写 JSONL、持久化高亮和插入疑问卡片，不生成解�
 页面可暴露通用对象：
 
 ```js
-window.paperReadingMarks = { load, render, bridgeUrl };
+window.paperReadingMarks = { load, render, bridgeUrl, bridgeToken };
 ```
